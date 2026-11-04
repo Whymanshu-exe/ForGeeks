@@ -16,7 +16,7 @@ GFG RBU Workspace is a developer-community ticketing platform for coordinating c
 
 ## Delivery phases
 
-1. **Secure foundation:** GitHub OAuth, verified-email handling, provider-account records, PostgreSQL sessions, API security headers, tests, and an EC2 container/CI deployment path.
+1. **Secure foundation:** GitHub OAuth, verified-email handling, provider-account records, PostgreSQL sessions, API security headers, tests, and an EC2 container/CI validation path.
 2. **Shared ticketing (implemented):** workspace-scoped APIs, role checks, ticket lifecycle changes, comments, activity, projects, team membership, and connected frontend pages.
 3. **Gemini assistant (implemented):** server-side Gemini calls with workspace-scoped ticket context, citations, and configuration/error handling.
 4. **Next:** invitations, richer settings, rate limiting/usage quotas, pagination, and broader production operations.
@@ -35,8 +35,8 @@ The backend runs at `http://localhost:4000`; the Vite frontend runs at `http://l
 
 ## CI/CD and AWS
 
-Pull requests run backend tests/schema validation and frontend lint/build in [ci-cd.yml](./.github/workflows/ci-cd.yml). A push to `main` deploys container images to an EC2 host through AWS Systems Manager.
+Pull requests and pushes to `main` run backend tests/schema validation and frontend lint/build in [ci-cd.yml](./.github/workflows/ci-cd.yml). Deployment is a manual local-image transfer to EC2; GitHub Actions does not access AWS or deploy the application.
 
-The deployment uses Docker Compose and an Nginx reverse proxy on EC2. To use GitHub's OIDC-based AWS deployment, create the ECR repositories, deployment-artifact S3 bucket, IAM roles, and EC2 instance profile, then configure the repository variables and secret described in [deploy/README.md](./deploy/README.md).
+The deployment uses Docker Compose behind the existing EC2 host Nginx and keeps PostgreSQL external. See [deploy/README.md](./deploy/README.md) for building x86-64 images locally, transferring them to the instance, configuring HTTPS, and applying Prisma migrations. No ECR, S3, ALB, or Systems Manager resources are required.
 
-**Cost note:** EC2 free-tier eligibility does not make an Application Load Balancer free. The first deployment keeps Nginx on one EC2 instance; add an AWS ALB only if you accept its additional hourly and usage charges. A production OAuth cookie also requires HTTPS.
+The demonstration deployment requires HTTPS for secure OAuth session cookies. The `t3.micro` has limited memory and disk; images are built off-instance, and Compose limits resources and Docker log growth.

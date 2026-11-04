@@ -22,7 +22,7 @@ Generate a session secret with:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Set `DATABASE_URL` to the PostgreSQL connection string already used by Prisma. For Supabase, download the project's CA certificate from its dashboard and add `sslmode=verify-full&sslrootcert=/absolute/path/to/prod-ca-2021.crt` to the URL query parameters. This validates both the certificate chain and server hostname; do not disable certificate verification. `SESSION_SECRET` must be at least 32 characters in production. The session store creates its `session` table automatically; the database role needs permission to create it.
+Set `DATABASE_URL` to the PostgreSQL connection string already used by Prisma. For Supabase, download the project's CA certificate from its dashboard into `backend/certs/prod-ca-2021.crt` and set `sslmode=verify-full&sslrootcert=/run/certs/prod-ca-2021.crt` in the URL query parameters. Docker Compose mounts this directory read-only into the API container. This validates both the certificate chain and server hostname; do not disable certificate verification. The certificate is ignored by Git. `SESSION_SECRET` must be at least 32 characters in production. The session store creates its `session` table automatically; the database role needs permission to create it.
 
 In the frontend, set `VITE_API_URL=http://localhost:4000` if the API is not at that default URL. The production container uses an empty value so the browser uses the same-origin `/api` path. Add `GEMINI_API_KEY` only to the backend environment to enable the workspace assistant; optionally set `GEMINI_MODEL` (defaults to `gemini-3.5-flash`). Never add the Gemini key to frontend environment variables.
 

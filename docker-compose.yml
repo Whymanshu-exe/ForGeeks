@@ -1,12 +1,20 @@
 services:
   backend:
-    image: ${ECR_REGISTRY}/gfg-rbu-backend:${IMAGE_TAG}
+    image: geekgate-backend:${IMAGE_TAG:-demo}
     env_file:
       - ./backend/.env
     environment:
       NODE_ENV: production
       PORT: 4000
+    volumes:
+      - ./backend/certs:/run/certs:ro
+    mem_limit: 512m
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -17,13 +25,19 @@ services:
       - app-network
 
   frontend:
-    image: ${ECR_REGISTRY}/gfg-rbu-frontend:${IMAGE_TAG}
+    image: geekgate-frontend:${IMAGE_TAG:-demo}
     depends_on:
       backend:
         condition: service_healthy
+    mem_limit: 128m
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "127.0.0.1:8080:80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/"]
       interval: 30s
