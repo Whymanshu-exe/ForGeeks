@@ -19,8 +19,11 @@ enum WorkspaceRole {
 
 enum TicketStatus {
   OPEN
+  TRIAGED
   IN_PROGRESS
-  DONE
+  IN_REVIEW
+  RESOLVED
+  CLOSED
 }
 
 enum TicketPriority {
@@ -30,16 +33,34 @@ enum TicketPriority {
   URGENT
 }
 
+enum OAuthProvider {
+  GITHUB
+}
+
 model User {
-  id              String       @id @default(uuid()) @db.Uuid
-  email           String       @unique
+  id              String         @id @default(uuid()) @db.Uuid
+  email           String         @unique
   name            String
+  oauthAccounts   OAuthAccount[]
   memberships     Membership[]
-  reportedTickets Ticket[]     @relation("TicketReporter")
-  assignedTickets Ticket[]     @relation("TicketAssignee")
+  reportedTickets Ticket[]       @relation("TicketReporter")
+  assignedTickets Ticket[]       @relation("TicketAssignee")
   comments        Comment[]
-  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
+  activities      Activity[]
+  createdAt       DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @db.Timestamptz(6)
+}
+
+model OAuthAccount {
+  id                String        @id @default(uuid()) @db.Uuid
+  provider          OAuthProvider
+  providerAccountId String
+  userId            String        @db.Uuid
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt         DateTime      @default(now()) @db.Timestamptz(6)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Workspace {
@@ -47,6 +68,7 @@ model Workspace {
   name        String
   memberships Membership[]
   projects    Project[]
+  activities  Activity[]
   createdAt   DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
 }
@@ -66,14 +88,15 @@ model Membership {
 }
 
 model Project {
-  id          String    @id @default(uuid()) @db.Uuid
-  workspaceId String    @db.Uuid
-  name        String
-  key         String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  tickets     Ticket[]
-  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @db.Uuid
+  name             String
+  key              String
+  nextTicketNumber Int       @default(1)
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tickets          Ticket[]
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
@@ -81,6 +104,7 @@ model Project {
 
 model Ticket {
   id          String         @id @default(uuid()) @db.Uuid
+  ticketKey   String
   projectId   String         @db.Uuid
   reporterId  String         @db.Uuid
   assigneeId  String?        @db.Uuid
@@ -88,16 +112,20 @@ model Ticket {
   description String?
   status      TicketStatus   @default(OPEN)
   priority    TicketPriority @default(MEDIUM)
+  labels      String[]       @default([])
+  githubUrl   String?
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   reporter    User           @relation("TicketReporter", fields: [reporterId], references: [id], onDelete: Restrict)
   assignee    User?          @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   comments    Comment[]
+  activities  Activity[]
   createdAt   DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime       @updatedAt @db.Timestamptz(6)
 
   @@index([projectId, status, updatedAt])
   @@index([assigneeId])
   @@index([reporterId])
+  @@unique([projectId, ticketKey])
 }
 
 model Comment {
@@ -109,5 +137,21 @@ model Comment {
   author    User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
+  @@index([ticketId, createdAt])
+}
+
+model Activity {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  actorId     String    @db.Uuid
+  ticketId    String?   @db.Uuid
+  action      String
+  summary     String
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor       User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  ticket      Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
   @@index([ticketId, createdAt])
 }

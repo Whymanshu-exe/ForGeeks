@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/layout/AppShell";
@@ -19,6 +20,15 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
+  useEffect(() => {
+    try {
+      localStorage.removeItem("gfg-rbu-demo-tickets");
+      localStorage.removeItem("gfg-rbu-demo-preferences");
+    } catch (error) {
+      console.error("Could not remove stale preview data from this browser:", error);
+    }
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

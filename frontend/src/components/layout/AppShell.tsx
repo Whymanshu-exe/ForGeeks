@@ -14,8 +14,9 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useTickets } from "../../lib/hooks";
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { authQueryKey, logout, useCurrentUser } from "../../lib/auth";
 import { Avatar } from "../ui/Avatar";
 
 const primaryNavigation = [
@@ -29,15 +30,21 @@ const primaryNavigation = [
 
 export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [search, setSearch] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const [search, setSearch] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
+  const authQuery = useCurrentUser();
   const searchInput = useRef<HTMLInputElement>(null);
-  const ticketsQuery = useTickets();
-  const myOpenTickets = ticketsQuery.data?.filter(
-    (ticket) => ticket.assignee === "Alex Morgan" && !["Resolved", "Closed"].includes(ticket.status),
-  ).length;
+  const user = authQuery.data;
+  const initials = user?.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join("") || "?";
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -55,6 +62,30 @@ export function AppShell() {
     navigate(`/tickets?q=${encodeURIComponent(search.trim())}`);
     setSidebarOpen(false);
   }
+
+  async function handleLogout() {
+    setLogoutError("");
+    try {
+      await logout();
+      queryClient.setQueryData(authQueryKey, null);
+      navigate("/login", { replace: true });
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : "Unable to sign out.");
+    }
+  }
+
+  if (authQuery.isPending) {
+    return <main className="auth-status" role="status">Checking your sign-in…</main>;
+  }
+  if (authQuery.isError) {
+    return (
+      <main className="auth-status" role="alert">
+        <p>{authQuery.error.message}</p>
+        <button className="button button-secondary" onClick={() => void authQuery.refetch()}>Try again</button>
+      </main>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
 
   return (
     <div className="app-frame">
@@ -83,7 +114,6 @@ export function AppShell() {
               }}
             >
               <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
-              {label === "My tickets" && myOpenTickets !== undefined && <span className="nav-count">{myOpenTickets}</span>}
             </NavLink>
           ))}
         </nav>
@@ -100,14 +130,15 @@ export function AppShell() {
           <NavLink to="/help" className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`} onClick={() => setSidebarOpen(false)}>
             <CircleHelp size={17} strokeWidth={1.8} /><span>Help & support</span>
           </NavLink>
-          <NavLink to="/login" className="nav-link" onClick={() => setSidebarOpen(false)}>
+          <button type="button" className="nav-link" onClick={() => { setSidebarOpen(false); void handleLogout(); }}>
             <LogOut size={17} strokeWidth={1.8} /><span>Sign out</span>
-          </NavLink>
+          </button>
+          {logoutError && <p className="inline-error" role="alert">{logoutError}</p>}
           <div className="sidebar-profile">
-            <Avatar initials="AM" tone="blue" />
-            <div className="sidebar-profile-copy"><strong>Alex Morgan</strong><span>Core team</span></div>
+            <Avatar initials={initials} tone="blue" />
+            <div className="sidebar-profile-copy"><strong>{user.name}</strong><span>GitHub member</span></div>
             <button className="icon-button profile-more" aria-label="Profile options" onClick={() => setProfileOpen(!profileOpen)}><ChevronDown size={16} /></button>
-            {profileOpen && <div className="profile-popover"><strong>Alex Morgan</strong><span>alex@gfgrbu.org</span><button onClick={() => { setProfileOpen(false); navigate("/settings"); }}>Account settings</button></div>}
+            {profileOpen && <div className="profile-popover"><strong>{user.name}</strong><span>{user.email}</span><button onClick={() => { setProfileOpen(false); navigate("/settings"); }}>Account settings</button></div>}
           </div>
         </div>
       </aside>
@@ -117,11 +148,11 @@ export function AppShell() {
           <button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
           <form className="global-search" onSubmit={submitSearch} role="search">
             <Search size={17} />
-            <input ref={searchInput} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tickets, projects, people..." aria-label="Search workspace" />
+            <input ref={searchInput} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search tickets…" aria-label="Search tickets" />
             <kbd>⌘ K</kbd>
           </form>
           <div className="topbar-actions">
-            <button className="topbar-user" onClick={() => navigate("/settings")}><Avatar initials="AM" tone="blue" /><span>Alex Morgan</span><ChevronDown size={15} /></button>
+            <button className="topbar-user" onClick={() => navigate("/settings")}><Avatar initials={initials} tone="blue" /><span>{user.name}</span><ChevronDown size={15} /></button>
           </div>
         </header>
         <main className="main-content"><Outlet /></main>
