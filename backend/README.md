@@ -47,7 +47,7 @@ All workspace routes require a GitHub-authenticated session and workspace member
 - `GET /api/tickets` with `q`, `projectId`, `status`, `priority`, `assigneeId`, `mine`, and `sort` filters
 - `POST /api/tickets`, `GET /api/tickets/:id-or-key`, `PATCH /api/tickets/:id-or-key`
 - `POST /api/tickets/:id-or-key/comments`
-- `GET /api/team`, `PATCH /api/team/:userId/role` (OWNER/ADMIN; only an OWNER can grant OWNER)
+- `GET /api/team`, `PATCH /api/team/:userId/role` (OWNER only)
 - `GET /api/activity`, `POST /api/assistant`
 
 Ticket updates are workspace-scoped; assignment requires an OWNER/ADMIN and the assignee must belong to the same workspace. Ticket and comment changes write activity records transactionally. Gemini receives only the current workspace's latest 50 tickets; the provider key stays on the server.
@@ -61,12 +61,12 @@ Ticket updates are workspace-scoped; assignment requires an OWNER/ADMIN and the 
 
 The frontend should call `/api/auth/me` with credentials included. An already-used email is not silently linked to the GitHub identity; explicit account linking should be a separate authenticated flow.
 
-New users are not automatically granted workspace membership. After the first GitHub sign-in, bootstrap an owner using the verified email:
+After the first GitHub sign-in, bootstrap an owner using the verified email:
 
 ```sh
 npm run seed:admin -- --email="your-verified-github-email"
 ```
 
-The bootstrap command creates or reuses the GFG RBU workspace, grants the user the OWNER role, and creates the default project.
+The bootstrap command creates or reuses the GFG RBU workspace, grants the user the OWNER role, and creates the default project. After the workspace exists, GitHub sign-ins automatically add users who are not yet members with the MEMBER role. Existing membership roles are preserved; an owner or admin does not get demoted on subsequent sign-ins.
 
 Run the backend tests with `npm test`. Tests cover OAuth identity, workspace membership, ticket creation, origin checks, role enforcement, and Gemini configuration. PostgreSQL integration tests verify sessions and provider identity; CI runs them against an ephemeral PostgreSQL service. Apply migrations before testing against a database. CI also validates the Prisma schema and builds/lints the frontend.

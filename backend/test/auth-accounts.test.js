@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   findOrCreateGitHubUser,
+  ensureDefaultWorkspaceMembership,
   OAuthAccountLinkRequiredError,
 } = require("../src/auth/accounts");
 
@@ -97,4 +98,37 @@ test("recovers a concurrent first-login race by loading the created provider acc
   });
 
   assert.equal(result, linkedUser);
+});
+
+test("adds a signed-in user to the existing default workspace as a member", async () => {
+  const calls = [];
+  const prisma = {
+    workspace: {
+      findFirst: async (input) => {
+        assert.deepEqual(input, { where: { name: "GFG RBU" }, select: { id: true } });
+        return { id: "workspace-1" };
+      },
+    },
+    membership: {
+      upsert: async (input) => calls.push(input),
+    },
+  };
+
+  await ensureDefaultWorkspaceMembership(prisma, "user-1");
+
+  assert.deepEqual(calls, [{
+    where: { workspaceId_userId: { workspaceId: "workspace-1", userId: "user-1" } },
+    update: {},
+    create: { workspaceId: "workspace-1", userId: "user-1", role: "MEMBER" },
+  }]);
+});
+
+test("does not create membership before the default workspace is bootstrapped", async () => {
+  let upsertCalled = false;
+  await ensureDefaultWorkspaceMembership({
+    workspace: { findFirst: async () => null },
+    membership: { upsert: async () => { upsertCalled = true; } },
+  }, "user-1");
+
+  assert.equal(upsertCalled, false);
 });

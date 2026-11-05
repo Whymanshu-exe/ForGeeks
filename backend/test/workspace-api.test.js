@@ -242,7 +242,7 @@ test("project creation is limited to workspace admins and owners", async () => {
   assert.match(response.body.error, /owners and admins/i);
 });
 
-test("admins cannot change an owner's role", async () => {
+test("admins cannot change any member's role", async () => {
   const app = createHarness({
     role: "ADMIN",
     prisma: {
@@ -253,7 +253,32 @@ test("admins cannot change an owner's role", async () => {
           role: "ADMIN",
           workspace: { id: workspaceId, name: "GFG RBU" },
         }),
-        findUnique: async () => ({ userId, role: "OWNER" }),
+        update: async () => { throw new Error("Should not update roles"); },
+      },
+    },
+  });
+
+  const response = await request(app)
+    .patch("/api/team/55555555-5555-4555-8555-555555555555/role")
+    .set("Origin", frontendUrl)
+    .send({ role: "ADMIN" });
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /only workspace owners/i);
+});
+
+test("members cannot change their own role", async () => {
+  const app = createHarness({
+    role: "MEMBER",
+    prisma: {
+      membership: {
+        findFirst: async () => ({
+          workspaceId,
+          userId,
+          role: "MEMBER",
+          workspace: { id: workspaceId, name: "GFG RBU" },
+        }),
+        update: async () => { throw new Error("Should not update roles"); },
       },
     },
   });
@@ -261,10 +286,41 @@ test("admins cannot change an owner's role", async () => {
   const response = await request(app)
     .patch(`/api/team/${userId}/role`)
     .set("Origin", frontendUrl)
-    .send({ role: "ADMIN" });
+    .send({ role: "OWNER" });
 
   assert.equal(response.status, 403);
-  assert.match(response.body.error, /only a workspace owner/i);
+  assert.match(response.body.error, /only workspace owners/i);
+});
+
+test("workspace owners can assign roles to members", async () => {
+  let updatedRole;
+  const app = createHarness({
+    role: "OWNER",
+    prisma: {
+      membership: {
+        findFirst: async () => ({
+          workspaceId,
+          userId,
+          role: "OWNER",
+          workspace: { id: workspaceId, name: "GFG RBU" },
+        }),
+        findUnique: async () => ({ userId: "55555555-5555-4555-8555-555555555555", role: "MEMBER" }),
+        update: async ({ data }) => {
+          updatedRole = data.role;
+          return { userId: "55555555-5555-4555-8555-555555555555", role: data.role };
+        },
+      },
+      activity: { create: async () => ({}) },
+    },
+  });
+
+  const response = await request(app)
+    .patch("/api/team/55555555-5555-4555-8555-555555555555/role")
+    .set("Origin", frontendUrl)
+    .send({ role: "ADMIN" });
+
+  assert.equal(response.status, 200);
+  assert.equal(updatedRole, "ADMIN");
 });
 
 test("the final workspace owner cannot be demoted", async () => {

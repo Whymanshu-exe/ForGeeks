@@ -131,3 +131,5 @@ docker compose run --rm backend npm run seed:admin -- --email="your-verified-git
 ```
 
 Do not run this with an email that you have not verified as yours.
+
+After the workspace is bootstrapped, new GitHub sign-ins are automatically added as MEMBER. Only an OWNER can change workspace roles.

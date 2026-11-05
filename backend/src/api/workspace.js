@@ -263,7 +263,7 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
   });
 
   router.patch("/team/:userId/role", requireSameOrigin(frontendUrl), async (req, res) => {
-    if (!elevatedRoles.has(req.membership.role)) throw httpError(403, "Only workspace owners and admins can manage roles");
+    if (req.membership.role !== "OWNER") throw httpError(403, "Only workspace owners can manage roles");
     const input = parseOrThrow(memberRoleSchema, req.body);
     if (input.role === "OWNER" && req.membership.role !== "OWNER") {
       throw httpError(403, "Only a workspace owner can grant the owner role");

@@ -9,7 +9,7 @@ const helmet = require("helmet");
 const { Strategy: GitHubStrategy } = require("passport-github2");
 const { Pool } = require("pg");
 const prisma = require("./database/prisma");
-const { findOrCreateGitHubUser } = require("./auth/accounts");
+const { findOrCreateGitHubUser, ensureDefaultWorkspaceMembership } = require("./auth/accounts");
 const { createWorkspaceRouter } = require("./api/workspace");
 
 const requiredEnvironment = ["DATABASE_URL", "SESSION_SECRET"];
@@ -73,11 +73,13 @@ function createVerifyCallback(getVerifiedEmail) {
     void (async () => {
       const email = await getVerifiedEmail(accessToken, profile);
       if (!email) throw new Error("GitHub did not provide a verified email address");
-      return findOrCreateGitHubUser(prisma, {
+      const user = await findOrCreateGitHubUser(prisma, {
         providerAccountId: profile.id,
         email: email.toLowerCase(),
         name: profile.displayName,
       });
+      await ensureDefaultWorkspaceMembership(prisma, user.id);
+      return user;
     })().then((user) => done(null, user), done);
   };
 }

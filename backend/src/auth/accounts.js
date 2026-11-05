@@ -46,4 +46,22 @@ async function findOrCreateGitHubUser(prisma, { providerAccountId, email, name }
   }
 }
 
-module.exports = { findOrCreateGitHubUser, OAuthAccountLinkRequiredError };
+async function ensureDefaultWorkspaceMembership(prisma, userId, workspaceName = "GFG RBU") {
+  const workspace = await prisma.workspace.findFirst({
+    where: { name: workspaceName },
+    select: { id: true },
+  });
+  if (!workspace) return;
+
+  await prisma.membership.upsert({
+    where: { workspaceId_userId: { workspaceId: workspace.id, userId } },
+    update: {},
+    create: { workspaceId: workspace.id, userId, role: "MEMBER" },
+  });
+}
+
+module.exports = {
+  findOrCreateGitHubUser,
+  ensureDefaultWorkspaceMembership,
+  OAuthAccountLinkRequiredError,
+};

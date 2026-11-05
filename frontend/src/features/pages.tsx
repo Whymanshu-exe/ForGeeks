@@ -337,7 +337,7 @@ export function TeamPage() {
   if (query.isError) return <ErrorPanel error={query.error} retry={() => void query.refetch()} />;
   if (workspaceQuery.isError) return <ErrorPanel error={workspaceQuery.error} retry={() => void workspaceQuery.refetch()} />;
   const members = query.data.members.filter((member) => `${member.name} ${member.email} ${member.role}`.toLowerCase().includes(filter.toLowerCase()));
-  const canManageRoles = workspaceQuery.data.role === "OWNER" || workspaceQuery.data.role === "ADMIN";
+  const canManageRoles = workspaceQuery.data.role === "OWNER";
   return (
     <>
       <PageHeading eyebrow="WORKSPACE / PEOPLE" title="Team members" description="Workspace members, roles, and ticket contributions." />
