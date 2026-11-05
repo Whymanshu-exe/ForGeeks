@@ -1,0 +1,13 @@
+[Unit]
+Description=Check for and deploy the latest tested GeekGate images
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+SupplementaryGroups=docker
+WorkingDirectory=/home/ubuntu/ForGeeks
+EnvironmentFile=/etc/geekgate-deploy.env
+ExecStart=/usr/bin/bash /home/ubuntu/ForGeeks/deploy/ec2-deploy-poll.sh

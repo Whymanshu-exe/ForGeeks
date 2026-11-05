@@ -1,6 +1,6 @@
 services:
   backend:
-    image: geekgate-backend:${IMAGE_TAG:-demo}
+    image: ghcr.io/${GHCR_OWNER:-whymanshu-exe}/forgeeks-backend:${IMAGE_TAG:-latest}
     env_file:
       - ./backend/.env
     environment:
@@ -25,7 +25,7 @@ services:
       - app-network
 
   frontend:
-    image: geekgate-frontend:${IMAGE_TAG:-demo}
+    image: ghcr.io/${GHCR_OWNER:-whymanshu-exe}/forgeeks-frontend:${IMAGE_TAG:-latest}
     depends_on:
       backend:
         condition: service_healthy

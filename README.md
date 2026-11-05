@@ -33,10 +33,10 @@ npm run dev
 
 The backend runs at `http://localhost:4000`; the Vite frontend runs at `http://localhost:5173`.
 
-## CI/CD and AWS
+## CI/CD and deployment
 
-Pull requests and pushes to `main` run backend tests/schema validation and frontend lint/build in [ci-cd.yml](./.github/workflows/ci-cd.yml). Deployment is a manual local-image transfer to EC2; GitHub Actions does not access AWS or deploy the application.
+Pull requests and pushes to `main` run backend tests/schema validation and frontend lint/build in [ci-cd.yml](./.github/workflows/ci-cd.yml). After those checks pass on `main`, GitHub Actions builds `linux/amd64` images and publishes them to GitHub Container Registry (GHCR). An EC2 systemd timer polls the main-branch commit and deploys its matching images, runs Prisma migrations, and checks application health.
 
-The deployment uses Docker Compose behind the existing EC2 host Nginx and keeps PostgreSQL external. See [deploy/README.md](./deploy/README.md) for building x86-64 images locally, transferring them to the instance, configuring HTTPS, and applying Prisma migrations. No ECR, S3, ALB, or Systems Manager resources are required.
+The deployment uses Docker Compose behind the existing EC2 host Nginx and keeps PostgreSQL external. See [deploy/README.md](./deploy/README.md) for one-time EC2 setup, GHCR access, automatic deployment, HTTPS, and Prisma migrations. No ECR, S3, ALB, or Systems Manager resources are required.
 
-The demonstration deployment requires HTTPS for secure OAuth session cookies. The `t3.micro` has limited memory and disk; images are built off-instance, and Compose limits resources and Docker log growth.
+The demonstration deployment requires HTTPS for secure OAuth session cookies. The `t3.micro` has limited memory and disk; images are built on GitHub-hosted runners, and Compose limits resources and Docker log growth.

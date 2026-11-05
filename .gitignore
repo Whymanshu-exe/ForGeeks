@@ -6,3 +6,4 @@
 /frontend/.env
 /frontend/.env.*
 !/frontend/.env.example
+geekgate-images.tar.gz
