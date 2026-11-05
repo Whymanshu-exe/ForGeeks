@@ -29,6 +29,17 @@ export type Ticket = {
   comments: { id: string; body: string; createdAt: string; author: { id: string; name: string } }[];
 };
 
+export type TicketSummary = {
+  id: string;
+  key: string;
+  title: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  createdAt: string;
+  project: Pick<Project, "id" | "key" | "name">;
+  assignee: { id: string; name: string } | null;
+};
+
 export type TeamMember = {
   id: string;
   name: string;
@@ -38,6 +49,7 @@ export type TeamMember = {
   activeTickets: number;
   resolvedTickets: number;
 };
+export type TeamAssignee = { id: string; name: string };
 export type Workspace = { id: string; name: string; role: "OWNER" | "ADMIN" | "MEMBER" };
 export type Profile = { id: string; name: string; email: string; createdAt?: string };
 
@@ -47,14 +59,16 @@ export type Activity = {
   summary: string;
   createdAt: string;
   actor: { id: string; name: string };
-  ticket: { id: string; ticketKey: string; title: string } | null;
+  ticket: { ticketKey: string } | null;
 };
 
 export type Dashboard = {
   totals: { tickets: number; open: number; inProgress: number; resolved: number; projects: number };
-  recentTickets: Ticket[];
+  recentTickets: TicketSummary[];
   recentActivity: Activity[];
 };
+
+export type Pagination = { page: number; limit: number; total: number; totalPages: number };
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiUrl}/api${path}`, {
@@ -104,7 +118,23 @@ export const api = {
   }),
   tickets: (filters: Record<string, string> = {}) => {
     const query = new URLSearchParams(filters);
-    return apiRequest<{ tickets: Ticket[] }>(`/tickets${query.size ? `?${query}` : ""}`);
+    return apiRequest<{ tickets: TicketSummary[]; pagination: Pagination }>(`/tickets${query.size ? `?${query}` : ""}`);
+  },
+  exportCompletedTickets: async () => {
+    const response = await fetch(`${apiUrl}/api/tickets/export/completed.csv`, { credentials: "include" });
+    if (!response.ok) {
+      let message = `Request failed (${response.status}).`;
+      try {
+        const body: unknown = await response.json();
+        if (typeof body === "object" && body !== null && "error" in body && typeof body.error === "string") {
+          message = body.error;
+        }
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+      throw new Error(message);
+    }
+    return response.blob();
   },
   ticket: async (id: string) => (await apiRequest<{ ticket: Ticket }>(`/tickets/${encodeURIComponent(id)}`)).ticket,
   createTicket: (input: {
@@ -125,11 +155,14 @@ export const api = {
     { method: "POST", body: JSON.stringify({ body }) },
   ),
   team: () => apiRequest<{ members: TeamMember[] }>("/team"),
+  assignees: () => apiRequest<{ members: TeamAssignee[] }>("/team/assignees"),
   updateMemberRole: (userId: string, role: TeamMember["role"]) => apiRequest<{ member: { userId: string; role: TeamMember["role"] } }>(
     `/team/${encodeURIComponent(userId)}/role`,
     { method: "PATCH", body: JSON.stringify({ role }) },
   ),
-  activity: (limit = 50) => apiRequest<{ activities: Activity[] }>(`/activity?limit=${limit}`),
+  activity: (page = 1, limit = 15) => apiRequest<{ activities: Activity[]; pagination: Pagination }>(
+    `/activity?page=${page}&limit=${limit}`,
+  ),
   askAssistant: (question: string) => apiRequest<{ answer: string; references: { key: string; title: string }[] }>(
     "/assistant",
     { method: "POST", body: JSON.stringify({ question }) },

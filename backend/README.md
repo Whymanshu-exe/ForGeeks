@@ -44,11 +44,12 @@ All workspace routes require a GitHub-authenticated session and workspace member
 
 - `GET /api/workspace`, `GET /api/profile`, `PATCH /api/profile`
 - `GET /api/dashboard`, `GET /api/projects`, `POST /api/projects` (OWNER/ADMIN)
-- `GET /api/tickets` with `q`, `projectId`, `status`, `priority`, `assigneeId`, `mine`, and `sort` filters
+- `GET /api/tickets` with `q`, `projectId`, `status`, `priority`, `assigneeId`, `mine`, `sort`, `page`, and `limit` filters; results are limited to tickets created in the last 14 days, 20 per page by default
 - `POST /api/tickets`, `GET /api/tickets/:id-or-key`, `PATCH /api/tickets/:id-or-key`
+- `GET /api/tickets/export/completed.csv` streams all resolved/closed tickets in the current workspace in CSV batches
 - `POST /api/tickets/:id-or-key/comments`
-- `GET /api/team`, `PATCH /api/team/:userId/role` (OWNER only)
-- `GET /api/activity`, `POST /api/assistant`
+- `GET /api/team`, `GET /api/team/assignees` (lean member list), `PATCH /api/team/:userId/role` (OWNER only)
+- `GET /api/activity?page=1&limit=15` (paginated; maximum 20 per page), `POST /api/assistant`
 
 Ticket updates are workspace-scoped; assignment requires an OWNER/ADMIN and the assignee must belong to the same workspace. Ticket and comment changes write activity records transactionally. Gemini receives only the current workspace's latest 50 tickets; the provider key stays on the server.
 

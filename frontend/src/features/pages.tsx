@@ -10,6 +10,7 @@ import {
   CircleHelp,
   CircleDot,
   Clock3,
+  Download,
   ExternalLink,
   GitBranch,
   Layers3,
@@ -38,8 +39,8 @@ import {
   type ApiTicketPriority,
   type ApiTicketStatus,
   type Project,
+  type TicketSummary,
   type TeamMember,
-  type Ticket,
   type TicketPriority,
   type TicketStatus,
 } from "../lib/workspace-api";
@@ -97,8 +98,26 @@ function EmptyPanel({ title, message }: { title: string; message: string }) {
   );
 }
 
-function TicketTable({ tickets }: { tickets: Ticket[] }) {
-  if (!tickets.length) return <EmptyPanel title="No tickets yet" message="Create the first ticket in this workspace to start tracking work." />;
+function PaginationControls({ page, totalPages, total, onPageChange }: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  const lastPage = Math.max(1, totalPages);
+  return (
+    <div className="table-footer">
+      <span>{total} results · Page <strong>{page}</strong> of <strong>{lastPage}</strong></span>
+      <div className="pagination-actions">
+        <button className="button button-secondary button-sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}><ArrowLeft size={14} /> Previous</button>
+        <button className="button button-secondary button-sm" disabled={page >= lastPage} onClick={() => onPageChange(page + 1)}>Next <ArrowRight size={14} /></button>
+      </div>
+    </div>
+  );
+}
+
+function TicketTable({ tickets }: { tickets: TicketSummary[] }) {
+  if (!tickets.length) return <EmptyPanel title="No matching recent tickets" message="No tickets created in the last 14 days match these filters." />;
   return (
     <div className="table-scroll">
       <table className="ticket-table">
@@ -208,9 +227,21 @@ export function TicketsPage() {
   const queryText = searchParams.get("q") || "";
   const projectId = searchParams.get("projectId") || "";
   const assigneeId = searchParams.get("assigneeId") || "";
+  const page = Math.max(1, Number(searchParams.get("page") || "1") || 1);
   const createOpen = searchParams.get("create") === "1";
-  const projectQuery = useQuery({ queryKey: projectsKey, queryFn: api.projects });
-  const teamQuery = useQuery({ queryKey: teamKey, queryFn: api.team });
+  const projectQuery = useQuery({ queryKey: projectsKey, queryFn: api.projects, staleTime: 5 * 60_000 });
+  const teamQuery = useQuery({ queryKey: [...teamKey, "assignees"], queryFn: api.assignees, staleTime: 5 * 60_000 });
+  const exportMutation = useMutation({
+    mutationFn: api.exportCompletedTickets,
+    onSuccess: (blob) => {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "completed-tickets.csv";
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
+  });
   const ticketFilters = useMemo(() => ({
     ...(queryText ? { q: queryText } : {}),
     ...(projectId ? { projectId } : {}),
@@ -218,14 +249,17 @@ export function TicketsPage() {
     ...(status ? { status: statusToApi[status as TicketStatus] } : {}),
     ...(priority ? { priority: priorityToApi[priority as TicketPriority] } : {}),
     ...(mine ? { mine: "true" } : {}),
+    page: String(page),
+    limit: "20",
     sort: sortNewest ? "newest" : "oldest",
-  }), [assigneeId, mine, priority, projectId, queryText, sortNewest, status]);
+  }), [assigneeId, mine, page, priority, projectId, queryText, sortNewest, status]);
   const query = useQuery({ queryKey: [...ticketsKey, ticketFilters], queryFn: () => api.tickets(ticketFilters) });
 
   function updateParam(key: string, value: string) {
     const next = new URLSearchParams(searchParams);
     if (value) next.set(key, value);
     else next.delete(key);
+    if (key !== "page") next.set("page", "1");
     setSearchParams(next, { replace: true });
   }
 
@@ -238,18 +272,23 @@ export function TicketsPage() {
 
   return (
     <>
-      <PageHeading eyebrow="WORKSPACE / TICKETS" title={mine ? "My tickets" : "All tickets"} description="Create, search, and track work in your workspace." action={<button className="button button-primary" onClick={toggleCreate}><Plus size={16} /> New ticket</button>} />
+      <PageHeading eyebrow="WORKSPACE / TICKETS" title={mine ? "My tickets" : "All tickets"} description="Recent tickets from the last 14 days. Older completed tickets are available as a CSV export." action={<div className="page-heading-action"><button className="button button-secondary" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()}><Download size={15} />{exportMutation.isPending ? "Exporting…" : "Export completed"}</button><button className="button button-primary" onClick={toggleCreate}><Plus size={16} /> New ticket</button></div>} />
+      {exportMutation.isError && <p className="inline-error" role="alert">{exportMutation.error.message}</p>}
       {projectQuery.isError && <ErrorPanel error={projectQuery.error} retry={() => void projectQuery.refetch()} />}
+      {teamQuery.isError && <ErrorPanel error={teamQuery.error} retry={() => void teamQuery.refetch()} />}
       <section className="panel tickets-panel">
-        <div className="list-toolbar"><div className="list-toolbar-title"><strong>Tickets</strong>{query.data && <span>{query.data.tickets.length} results</span>}</div><div className="ticket-filters">
+        <div className="list-toolbar"><div className="list-toolbar-title"><strong>Tickets</strong>{query.data && <span>{query.data.pagination.total} results</span>}</div><div className="ticket-filters">
           <label className="table-search"><Search size={15} /><input placeholder="Search tickets…" value={queryText} onChange={(event) => updateParam("q", event.target.value)} aria-label="Search tickets" /></label>
           <select aria-label="Filter by project" value={projectId} onChange={(event) => updateParam("projectId", event.target.value)}><option value="">All projects</option>{projectQuery.data?.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
-          <select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{ticketStatuses.map((item) => <option key={item}>{item}</option>)}</select>
-          <select aria-label="Filter by priority" value={priority} onChange={(event) => setPriority(event.target.value)}><option value="">All priorities</option>{priorities.map((item) => <option key={item}>{item}</option>)}</select>
+          <select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); updateParam("page", "1"); }}><option value="">All statuses</option>{ticketStatuses.map((item) => <option key={item}>{item}</option>)}</select>
+          <select aria-label="Filter by priority" value={priority} onChange={(event) => { setPriority(event.target.value); updateParam("page", "1"); }}><option value="">All priorities</option>{priorities.map((item) => <option key={item}>{item}</option>)}</select>
           <select aria-label="Filter by assignee" value={assigneeId} onChange={(event) => updateParam("assigneeId", event.target.value)}><option value="">All assignees</option>{teamQuery.data?.members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select>
-          <button type="button" className="icon-button sort-button" aria-label={`Sort by creation date, ${sortNewest ? "newest" : "oldest"} first`} onClick={() => setSortNewest((value) => !value)}><ArrowDown size={16} style={{ transform: sortNewest ? undefined : "rotate(180deg)" }} /></button>
+          <button type="button" className="icon-button sort-button" aria-label={`Sort by creation date, ${sortNewest ? "newest" : "oldest"} first`} onClick={() => { setSortNewest((value) => !value); updateParam("page", "1"); }}><ArrowDown size={16} style={{ transform: sortNewest ? undefined : "rotate(180deg)" }} /></button>
         </div></div>
-        {query.isPending ? <LoadingPanel /> : query.isError ? <ErrorPanel error={query.error} retry={() => void query.refetch()} /> : <TicketTable tickets={query.data.tickets} />}
+        {query.isPending ? <LoadingPanel /> : query.isError ? <ErrorPanel error={query.error} retry={() => void query.refetch()} /> : <>
+          <TicketTable tickets={query.data.tickets} />
+          <PaginationControls {...query.data.pagination} onPageChange={(nextPage) => updateParam("page", String(nextPage))} />
+        </>}
       </section>
       {createOpen && (projectQuery.isPending ? <LoadingPanel label="Loading projects…" /> : projectQuery.isError ? <ErrorPanel error={projectQuery.error} retry={() => void projectQuery.refetch()} /> : <TicketCreateForm projects={projectQuery.data.projects} onClose={toggleCreate} />)}
     </>
@@ -262,7 +301,7 @@ export function TicketDetailPage() {
   const [comment, setComment] = useState("");
   const [notice, setNotice] = useState("");
   const query = useQuery({ queryKey: [...ticketsKey, ticketId], queryFn: () => api.ticket(ticketId) });
-  const teamQuery = useQuery({ queryKey: teamKey, queryFn: api.team });
+  const teamQuery = useQuery({ queryKey: [...teamKey, "assignees"], queryFn: api.assignees, staleTime: 5 * 60_000 });
   const mutation = useMutation({
     mutationFn: (input: { status?: ApiTicketStatus; priority?: ApiTicketPriority; assigneeId?: string | null }) => api.updateTicket(ticketId, input),
     onSuccess: async () => {
@@ -321,7 +360,7 @@ export function TicketDetailPage() {
 
 export function TeamPage() {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: teamKey, queryFn: api.team });
+  const query = useQuery({ queryKey: teamKey, queryFn: api.team, staleTime: 5 * 60_000 });
   const workspaceQuery = useQuery({ queryKey: workspaceKey, queryFn: api.workspace });
   const [filter, setFilter] = useState("");
   const roleMutation = useMutation({
@@ -396,22 +435,17 @@ function ActivityList({ activities }: { activities: Activity[] }) {
 }
 
 export function ActivityPage() {
-  const query = useQuery({ queryKey: activityKey, queryFn: () => api.activity(100) });
+  const [page, setPage] = useState(1);
+  const query = useQuery({ queryKey: [...activityKey, page], queryFn: () => api.activity(page, 15) });
   if (query.isPending) return <LoadingPanel />;
   if (query.isError) return <ErrorPanel error={query.error} retry={() => void query.refetch()} />;
   const activities = query.data.activities;
   return (
     <>
-      <PageHeading eyebrow="WORKSPACE / ACTIVITY" title="Activity logs" description="A record of ticket creation, updates, and comments." action={<button className="button button-secondary" disabled={!activities.length} onClick={() => {
-        const rows = [["Actor", "Action", "Date"], ...activities.map((item) => [item.actor.name, item.summary, item.createdAt])];
-        const csv = rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(",")).join("\r\n");
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-        link.download = "workspace-activity.csv";
-        link.click();
-        URL.revokeObjectURL(link.href);
-      }}><ArrowDown size={16} /> Export CSV</button>} />
-      <section className="panel full-activity-panel">{activities.length ? <ActivityList activities={activities} /> : <EmptyPanel title="No activity yet" message="Ticket changes and comments will be recorded here." />}</section>
+      <PageHeading eyebrow="WORKSPACE / ACTIVITY" title="Activity logs" description="A record of ticket creation, updates, and comments." />
+      <section className="panel full-activity-panel">{activities.length ? <ActivityList activities={activities} /> : <EmptyPanel title="No activity yet" message="Ticket changes and comments will be recorded here." />}
+        <PaginationControls {...query.data.pagination} onPageChange={setPage} />
+      </section>
     </>
   );
 }
@@ -424,7 +458,7 @@ export function SettingsPage() {
   const [projectKey, setProjectKey] = useState("");
   const [notice, setNotice] = useState("");
   const workspaceQuery = useQuery({ queryKey: workspaceKey, queryFn: api.workspace });
-  const projectsQuery = useQuery({ queryKey: projectsKey, queryFn: api.projects });
+  const projectsQuery = useQuery({ queryKey: projectsKey, queryFn: api.projects, staleTime: 5 * 60_000 });
   const profileMutation = useMutation({
     mutationFn: api.updateProfile,
     onSuccess: async ({ user }) => {

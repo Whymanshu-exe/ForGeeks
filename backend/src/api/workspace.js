@@ -3,6 +3,7 @@ const { z } = require("zod");
 
 const ticketStatuses = ["OPEN", "TRIAGED", "IN_PROGRESS", "IN_REVIEW", "RESOLVED", "CLOSED"];
 const ticketPriorities = ["LOW", "MEDIUM", "HIGH", "URGENT"];
+const completedTicketStatuses = ["RESOLVED", "CLOSED"];
 const elevatedRoles = new Set(["OWNER", "ADMIN"]);
 const ticketInclude = {
   project: { select: { id: true, key: true, name: true } },
@@ -12,6 +13,16 @@ const ticketInclude = {
     orderBy: { createdAt: "asc" },
     include: { author: { select: { id: true, name: true } } },
   },
+};
+const ticketListSelect = {
+  id: true,
+  ticketKey: true,
+  title: true,
+  status: true,
+  priority: true,
+  createdAt: true,
+  project: { select: { id: true, key: true, name: true } },
+  assignee: { select: { id: true, name: true } },
 };
 
 const labelsSchema = z.array(z.string().trim().min(1).max(32)).max(10).default([]);
@@ -46,6 +57,12 @@ const listQuerySchema = z.object({
   assigneeId: z.string().uuid().optional(),
   mine: z.enum(["true", "false"]).optional(),
   sort: z.enum(["newest", "oldest"]).default("newest"),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+}).strict();
+const activityQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(20).default(15),
 }).strict();
 
 function httpError(status, message) {
@@ -92,6 +109,25 @@ function serializeTicket(ticket) {
       author: comment.author,
     })),
   };
+}
+
+function serializeTicketSummary(ticket) {
+  return {
+    id: ticket.id,
+    key: ticket.ticketKey,
+    title: ticket.title,
+    status: statusLabel(ticket.status),
+    priority: priorityLabel(ticket.priority),
+    createdAt: ticket.createdAt.toISOString(),
+    project: ticket.project,
+    assignee: ticket.assignee,
+  };
+}
+
+function csvCell(value) {
+  const text = value == null ? "" : String(value);
+  const safeText = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replaceAll('"', '""')}"`;
 }
 
 function ticketIdentifierFilter(identifier) {
@@ -168,7 +204,12 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
     const projects = await prisma.project.findMany({
       where: { workspaceId: req.workspace.id },
       orderBy: { name: "asc" },
-      include: { _count: { select: { tickets: true } } },
+      select: {
+        id: true,
+        key: true,
+        name: true,
+        _count: { select: { tickets: true } },
+      },
     });
     return res.json({ projects: projects.map(({ _count, ...project }) => ({ ...project, ticketCount: _count.tickets })) });
   });
@@ -195,7 +236,7 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
         where: projectWhere,
         orderBy: { updatedAt: "desc" },
         take: 5,
-        include: ticketInclude,
+        select: ticketListSelect,
       }),
       prisma.activity.findMany({
         where: { workspaceId: req.workspace.id },
@@ -217,7 +258,7 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
         resolved: (counts.RESOLVED || 0) + (counts.CLOSED || 0),
         projects: projectCount,
       },
-      recentTickets: recentTickets.map(serializeTicket),
+      recentTickets: recentTickets.map(serializeTicketSummary),
       recentActivity: recentActivity.map((item) => ({
         id: item.id,
         action: item.action,
@@ -229,12 +270,27 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
     });
   });
 
+  router.get("/team/assignees", async (req, res) => {
+    const memberships = await prisma.membership.findMany({
+      where: { workspaceId: req.workspace.id },
+      orderBy: { createdAt: "asc" },
+      select: { user: { select: { id: true, name: true } } },
+    });
+    return res.json({ members: memberships.map(({ user }) => user) });
+  });
+
   router.get("/team", async (req, res) => {
     const memberships = await prisma.membership.findMany({
       where: { workspaceId: req.workspace.id },
       orderBy: { createdAt: "asc" },
-      include: { user: { select: { id: true, name: true, email: true, createdAt: true } } },
+      select: {
+        userId: true,
+        role: true,
+        createdAt: true,
+        user: { select: { id: true, name: true, email: true } },
+      },
     });
+
     const projectWhere = { project: { workspaceId: req.workspace.id } };
     const userIds = memberships.map((membership) => membership.userId);
     const [assignedGroups, resolvedGroups] = await Promise.all([
@@ -296,17 +352,25 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
   });
 
   router.get("/activity", async (req, res) => {
-    const limitResult = z.coerce.number().int().min(1).max(100).default(50).safeParse(req.query.limit);
-    if (!limitResult.success) return res.status(400).json({ error: "limit must be between 1 and 100" });
-    const activities = await prisma.activity.findMany({
-      where: { workspaceId: req.workspace.id },
-      orderBy: { createdAt: "desc" },
-      take: limitResult.data,
-      include: {
-        actor: { select: { id: true, name: true } },
-        ticket: { select: { id: true, ticketKey: true, title: true } },
-      },
-    });
+    const query = parseOrThrow(activityQuerySchema, req.query);
+    const where = { workspaceId: req.workspace.id };
+    const [total, activities] = await Promise.all([
+      prisma.activity.count({ where }),
+      prisma.activity.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: {
+          id: true,
+          action: true,
+          summary: true,
+          createdAt: true,
+          actor: { select: { id: true, name: true } },
+          ticket: { select: { ticketKey: true } },
+        },
+      }),
+    ]);
     return res.json({ activities: activities.map((item) => ({
       id: item.id,
       action: item.action,
@@ -314,12 +378,13 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
       createdAt: item.createdAt.toISOString(),
       actor: item.actor,
       ticket: item.ticket,
-    })) });
+    })), pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) } });
   });
 
   router.get("/tickets", async (req, res) => {
     const query = parseOrThrow(listQuerySchema, req.query);
     const where = {
+      createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
       project: {
         workspaceId: req.workspace.id,
         ...(query.projectId ? { id: query.projectId } : {}),
@@ -327,27 +392,87 @@ function createWorkspaceRouter({ prisma, frontendUrl, fetchImpl = fetch }) {
       ...(query.status ? { status: query.status } : {}),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.assigneeId ? { assigneeId: query.assigneeId } : {}),
-      ...(query.mine === "true" ? {
-        AND: [{ OR: [{ assigneeId: req.user.id }, { reporterId: req.user.id }] }],
-      } : {}),
+      ...(query.mine === "true" ? { OR: [{ assigneeId: req.user.id }, { reporterId: req.user.id }] } : {}),
       ...(query.q ? {
-        AND: [
-          ...(query.mine === "true" ? [{ OR: [{ assigneeId: req.user.id }, { reporterId: req.user.id }] }] : []),
-          { OR: [
+        AND: [{ OR: [
           { ticketKey: { contains: query.q, mode: "insensitive" } },
           { title: { contains: query.q, mode: "insensitive" } },
           { description: { contains: query.q, mode: "insensitive" } },
-          ] },
-        ],
+        ] }],
       } : {}),
     };
-    const tickets = await prisma.ticket.findMany({
-      where,
-      orderBy: { createdAt: query.sort === "oldest" ? "asc" : "desc" },
-      take: 100,
-      include: ticketInclude,
+    const [total, tickets] = await Promise.all([
+      prisma.ticket.count({ where }),
+      prisma.ticket.findMany({
+        where,
+        orderBy: [{ createdAt: query.sort === "oldest" ? "asc" : "desc" }, { id: query.sort === "oldest" ? "asc" : "desc" }],
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: ticketListSelect,
+      }),
+    ]);
+    return res.json({
+      tickets: tickets.map(serializeTicketSummary),
+      pagination: { page: query.page, limit: query.limit, total, totalPages: Math.ceil(total / query.limit) },
     });
-    return res.json({ tickets: tickets.map(serializeTicket) });
+  });
+
+  router.get("/tickets/export/completed.csv", async (req, res) => {
+    res.status(200);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="completed-tickets.csv"');
+    res.write("\uFEFF");
+    res.write([
+      "Ticket key", "Title", "Status", "Priority", "Created at", "Updated at",
+      "Project key", "Project", "Reporter", "Assignee", "Description",
+    ].map(csvCell).join(",") + "\r\n");
+
+    let cursor;
+    while (true) {
+      const batch = await prisma.ticket.findMany({
+        where: {
+          project: { workspaceId: req.workspace.id },
+          status: { in: completedTicketStatuses },
+        },
+        orderBy: { id: "asc" },
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        take: 250,
+        select: {
+          id: true,
+          ticketKey: true,
+          title: true,
+          status: true,
+          priority: true,
+          description: true,
+          createdAt: true,
+          updatedAt: true,
+          project: { select: { key: true, name: true } },
+          reporter: { select: { name: true } },
+          assignee: { select: { name: true } },
+        },
+      });
+      if (!batch.length) break;
+
+      for (const ticket of batch) {
+        res.write([
+          ticket.ticketKey,
+          ticket.title,
+          statusLabel(ticket.status),
+          priorityLabel(ticket.priority),
+          ticket.createdAt.toISOString(),
+          ticket.updatedAt.toISOString(),
+          ticket.project.key,
+          ticket.project.name,
+          ticket.reporter.name,
+          ticket.assignee?.name,
+          ticket.description,
+        ].map(csvCell).join(",") + "\r\n");
+      }
+      cursor = batch.at(-1).id;
+      if (batch.length < 250) break;
+    }
+
+    return res.end();
   });
 
   router.get("/tickets/:ticketId", async (req, res) => {

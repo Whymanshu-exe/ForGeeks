@@ -123,6 +123,8 @@ model Ticket {
   updatedAt   DateTime       @updatedAt @db.Timestamptz(6)
 
   @@index([projectId, status, updatedAt])
+  @@index([projectId, createdAt])
+  @@index([status, createdAt])
   @@index([assigneeId])
   @@index([reporterId])
   @@unique([projectId, ticketKey])

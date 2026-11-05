@@ -208,11 +208,14 @@ test("Gemini endpoint reports missing server configuration without fake answers"
 
 test("ticket search is scoped to the current workspace", async () => {
   let where;
+  let query;
   const app = createHarness({
     prisma: {
       ticket: {
+        count: async () => 0,
         findMany: async (input) => {
           where = input.where;
+          query = input;
           return [];
         },
       },
@@ -223,8 +226,177 @@ test("ticket search is scoped to the current workspace", async () => {
 
   assert.equal(response.status, 200);
   assert.equal(where.project.workspaceId, workspaceId);
+  assert.ok(where.createdAt.gte instanceof Date);
+  assert.equal(query.take, 20);
+  assert.equal(query.skip, 0);
+  assert.equal(query.select.comments, undefined);
+  assert.equal(query.select.description, undefined);
   assert.match(JSON.stringify(where.AND), /cache/);
-  assert.match(JSON.stringify(where.AND), new RegExp(userId));
+  assert.match(JSON.stringify(where.OR), new RegExp(userId));
+});
+
+test("ticket lists are paginated and limited to tickets created in the last 14 days", async () => {
+  let query;
+  const app = createHarness({
+    prisma: {
+      ticket: {
+        count: async ({ where }) => {
+          assert.ok(where.createdAt.gte instanceof Date);
+          return 43;
+        },
+        findMany: async (input) => {
+          query = input;
+          return [];
+        },
+      },
+    },
+  });
+
+  const response = await request(app).get("/api/tickets?page=2&limit=15");
+
+  assert.equal(response.status, 200);
+  assert.equal(query.skip, 15);
+  assert.equal(query.take, 15);
+  assert.equal(response.body.pagination.total, 43);
+  assert.equal(response.body.pagination.totalPages, 3);
+});
+
+test("dashboard returns lightweight recent-ticket summaries", async () => {
+  let ticketQuery;
+  const now = new Date();
+  const app = createHarness({
+    prisma: {
+      ticket: {
+        count: async () => 1,
+        groupBy: async () => [{ status: "OPEN", _count: { _all: 1 } }],
+        findMany: async (input) => {
+          ticketQuery = input;
+          return [{
+            id: ticketId,
+            ticketKey: "GFG-1",
+            title: "Add ticket API",
+            status: "OPEN",
+            priority: "MEDIUM",
+            createdAt: now,
+            project: { id: projectId, key: "GFG", name: "General" },
+            assignee: null,
+          }];
+        },
+      },
+      activity: { findMany: async () => [] },
+      project: { count: async () => 1 },
+    },
+  });
+
+  const response = await request(app).get("/api/dashboard");
+
+  assert.equal(response.status, 200);
+  assert.equal(ticketQuery.select.description, undefined);
+  assert.equal(ticketQuery.select.comments, undefined);
+  assert.deepEqual(response.body.recentTickets[0], {
+    id: ticketId,
+    key: "GFG-1",
+    title: "Add ticket API",
+    status: "Open",
+    priority: "Medium",
+    createdAt: now.toISOString(),
+    project: { id: projectId, key: "GFG", name: "General" },
+    assignee: null,
+  });
+});
+
+test("activity endpoint returns only one validated page with lean selected fields", async () => {
+  let query;
+  const now = new Date();
+  const app = createHarness({
+    prisma: {
+      activity: {
+        count: async () => 33,
+        findMany: async (input) => {
+          query = input;
+          return [{
+            id: "activity-1",
+            action: "TICKET_CREATED",
+            summary: "created a ticket",
+            createdAt: now,
+            actor: { id: userId, name: "Signed-in member" },
+            ticket: { ticketKey: "GFG-1" },
+          }];
+        },
+      },
+    },
+  });
+
+  const response = await request(app).get("/api/activity?page=2&limit=15");
+
+  assert.equal(response.status, 200);
+  assert.equal(query.skip, 15);
+  assert.equal(query.take, 15);
+  assert.equal(query.select.ticket.select.title, undefined);
+  assert.deepEqual(response.body.pagination, { page: 2, limit: 15, total: 33, totalPages: 3 });
+  assert.equal(response.body.activities[0].ticket.ticketKey, "GFG-1");
+});
+
+test("assignee lookup returns only member ids and names", async () => {
+  let query;
+  const app = createHarness({
+    prisma: {
+      membership: {
+        findFirst: async () => ({
+          workspaceId,
+          userId,
+          role: "MEMBER",
+          workspace: { id: workspaceId, name: "GFG RBU" },
+        }),
+        findMany: async (input) => {
+          query = input;
+          return [{ user: { id: userId, name: "Signed-in member" } }];
+        },
+      },
+    },
+  });
+
+  const response = await request(app).get("/api/team/assignees");
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(query.select, { user: { select: { id: true, name: true } } });
+  assert.deepEqual(response.body, { members: [{ id: userId, name: "Signed-in member" }] });
+});
+
+test("completed-ticket export streams only resolved and closed tickets", async () => {
+  let query;
+  const now = new Date("2026-11-05T10:00:00.000Z");
+  const app = createHarness({
+    prisma: {
+      ticket: {
+        findMany: async (input) => {
+          query = input;
+          return [{
+            id: ticketId,
+            ticketKey: "GFG-2",
+            title: '=cmd,"safe"',
+            status: "RESOLVED",
+            priority: "HIGH",
+            description: "Completed work",
+            createdAt: now,
+            updatedAt: now,
+            project: { key: "GFG", name: "General" },
+            reporter: { name: "Reporter" },
+            assignee: null,
+          }];
+        },
+      },
+    },
+  });
+
+  const response = await request(app).get("/api/tickets/export/completed.csv");
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers["content-type"], /text\/csv/);
+  assert.match(query.where.status.in.join(","), /RESOLVED,CLOSED/);
+  assert.equal(query.take, 250);
+  assert.match(response.text, /"'=cmd,""safe"""/);
+  assert.match(response.text, /GFG-2/);
 });
 
 test("project creation is limited to workspace admins and owners", async () => {
